@@ -6,13 +6,16 @@ DEBUG = NONE
 
 DFLAGS = -relocation-model=pic -w -O3 -lowmem -release -boundscheck=off
 
-all: avmm_sha3.vvp avmm_sha3.vpi
+all: avmm_sha3.vvp avmm_sha3.vpi avmm_sha3_de10
 
 clean:
-	rm -f avmm_sha3.vvp avmm_sha3.vpi avmm_sha3.o avmm_sha3.vcd sha3.o libsha3.a
+	rm -f avmm_sha3.vvp avmm_sha3.vpi avmm_sha3.o avmm_sha3.vcd sha3.o libsha3.a  avmm_sha3_de10
 
 run: avmm_sha3.vvp avmm_sha3.vpi
-	vvp -M. -mavmm_sha3 avmm_sha3.vvp +UVM_TESTNAME=avmm_sha3.random_test # +UVM_OBJECTION_TRACE # +UVM_VERBOSITY=DEBUG
+	vvp -M. -mavmm_sha3 avmm_sha3.vvp +UVM_TESTNAME=avmm_sha3.random_test +UVM_VERBOSITY=NONE # +UVM_OBJECTION_TRACE # 
+
+run_de10: avmm_sha3_de10
+	./avmm_sha3_de10 +UVM_TESTNAME=avmm_sha3.random_test +UVM_VERBOSITY=NONE
 
 avmm_sha3.vvp: ../testbench/avmm_sha3.v ../src/rtl/*.v
 	iverilog -o $@ $^
@@ -28,3 +31,6 @@ libsha3.a: sha3.o
 
 sha3.o: ../testbench/tiny_sha3/sha3.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+avmm_sha3_de10: ../testbench/avmm_sha3_de10.d libsha3.a
+	ldc2 -link-defaultlib-shared $(DFLAGS) -of$@ -L-luvm-ldc-shared -L-lesdl-ldc-shared -L-lphobos2-ldc-shared -L-lz3 -L-ldl $^

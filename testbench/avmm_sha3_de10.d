@@ -1,7 +1,16 @@
+module avmm_sha3;
+
 import esdl;
 import uvm;
 import std.stdio;
 import std.string: format;
+
+import core.sys.posix.sys.mman: mmap, munmap,
+  PROT_READ, PROT_WRITE, MAP_SHARED, MAP_FAILED;
+import core.sys.posix.fcntl: open, O_SYNC, O_RDWR;
+import core.sys.posix.unistd: close;
+import core.volatile: volatileLoad, volatileStore;
+import std.conv;
 
 extern(C) void* sha3(const void* str, size_t strlen, void* md, int mdlen);
 
@@ -129,10 +138,154 @@ class sha3_agent: uvm_agent
 {
   mixin uvm_component_utils;
 
-  @UVM_BUILD sha3_sequencer  sequencer;
+  @UVM_BUILD {
+    sha3_sequencer  sequencer;
+    sha3_driver     driver;
+  }
 
   this(string name, uvm_component parent) {
     super(name, parent);
+  }
+
+  override void connect_phase(uvm_phase phase) {
+    super.connect_phase(phase);
+    if(get_is_active() == UVM_ACTIVE) {
+      driver.seq_item_port.connect(sequencer.seq_item_export);
+    }
+  }
+}
+
+class sha3_driver: uvm_driver!sha3_seq_item
+{
+  mixin uvm_component_utils;
+  this(string name, uvm_component parent) {
+    super(name, parent);
+  }
+
+  @UVM_BUILD {
+    uvm_analysis_port!sha3_seq_item sha3_req_port;
+    uvm_analysis_port!sha3_seq_item sha3_rsp_port;
+  }
+  
+  version(CYCLONE_V) {
+    // axi registers specific
+
+    // The start address and length of the Lightweight bridge
+    enum uint HPS_TO_FPGA_LW_BASE = 0xFF200000;
+    enum uint HPS_TO_FPGA_LW_SPAN = 0x0020000;
+    
+    @rand(false) uint* regs;
+    int   fd;
+    @rand(false) void* mem;
+  }
+
+  void map_registers() {
+    version(CYCLONE_V) {
+      // access AXI registers
+      fd = open("/dev/mem", O_RDWR | O_SYNC);
+      if (fd < 0) {
+	assert(false, "Failed to open /dev/mem\n  Does it exists?\n" ~
+	       "  Check permissions\n  Check devicetree\n");
+      }
+
+      mem = mmap(null, HPS_TO_FPGA_LW_SPAN, PROT_READ | PROT_WRITE,
+		 MAP_SHARED, fd, HPS_TO_FPGA_LW_BASE);
+
+      if (mem == MAP_FAILED) {
+	close(fd);
+	assert(false, "Can't map memory");
+      }
+
+      regs = cast(uint*) mem;
+    }
+  }
+
+  version(CYCLONE_V) {
+    override void final_phase(uvm_phase phase) {
+      super.final_phase(phase);
+      munmap(mem, HPS_TO_FPGA_LW_SPAN);
+      close(fd);
+    }
+  }
+  
+  override void run_phase(uvm_phase phase) {
+    uvm_info ("INFO" , "Called my_driver::run_phase", UVM_DEBUG);
+    super.run_phase(phase);
+    map_registers();
+    get_and_drive(phase);
+  }
+
+  void get_and_drive(uvm_phase phase) {
+    while(true) {
+      seq_item_port.get_next_item(req);
+      execReq(req);
+      sha3_seq_item rsp = new sha3_seq_item("SHA3 RESPONSE");
+      collateRsp(rsp, req.out_size);
+      seq_item_port.item_done();
+    }
+  }
+
+  void execReq(sha3_seq_item req) {
+    sha3_req_port.write(req);
+    version(CYCLONE_V) {
+      auto data = req.phrase;
+      auto size = req.out_size;
+      
+      bool last_block = false;
+      uint rate = (1600-2*size)/8; // 144, 136, 104, 72
+      uint data_length = cast(uint) (((data.length + rate))/(rate));
+      for (size_t k=0; k!=data_length; ++k) {
+	ubyte [200] arr_block;
+	for (size_t i=0; i!=rate; ++i) {
+	  if (k*rate + i < data.length) {
+	    arr_block[i] = data[rate*k+i];
+	  }
+	  else if (k*rate + i == data.length) {
+	    arr_block[i] = 0x06;
+	    last_block = true;
+	  }
+	  else {
+	    arr_block[i] = 0x00;
+	  }
+	  if ( i==(rate-1) && last_block == true) {
+	    arr_block[i] |= 0x80;
+	  }
+	}
+
+	for (size_t i=0; i != (k==0 ? 50 : rate/4); ++i) {
+	  uint word = 0;
+	  for (size_t j=0; j!=4; ++j) {
+	    word += (cast(uint) arr_block[i*4+j]) << ((j) * 8);
+	  }
+	  volatileStore(regs + 0x200/4 + i, word);
+	}
+	if (k == 0) {
+	  volatileStore(regs + 0x20/4, 1);
+	  volatileStore(regs + 0x20/4, 0);
+	}
+	else {
+	  volatileStore(regs + 0x20/4, 2);
+	  volatileStore(regs + 0x20/4, 0);
+	}
+      }
+    }
+  }
+
+  void collateRsp(sha3_seq_item rsp, output_size_enum out_size) {
+    version(CYCLONE_V) {
+      uint  num_reads = out_size/32;
+      rsp.out_size = out_size;
+      for (size_t j=0; j!=num_reads; ++j) {
+	uint data;
+	ubyte* data_bytes;
+	data = volatileLoad(regs + 0x300/4 + j);
+	data_bytes = cast(ubyte*) &data;
+	for (size_t i=0; i!=4; ++i) {
+	  rsp.phrase ~= data_bytes[i];
+	}
+      }
+      sha3_rsp_port.write(rsp);
+    }
   }
 }
 
@@ -500,44 +653,39 @@ class sha3_scoreboard(int DW, int AW): uvm_scoreboard
   }
   
   @UVM_BUILD {
-    uvm_analysis_imp!(write) sha3_analysis;
-  }
-  
-  ubyte[] expected;
-  
-  void write(sha3_seq_item item) {
-    if (item.type is access_enum.WRITE) {	// req
-      uvm_info("WRITE", item.sprint, UVM_DEBUG);
-      write_seq = item;
-      run_ph.raise_objection(this);
-    }
-    else {
-      uvm_info("READ", item.sprint, UVM_DEBUG);
-      expected.length = item.out_size/8;
-      sha3(write_seq.phrase.ptr,
-	   cast(uint) write_seq.phrase.length, expected.ptr, cast(uint) expected.length);
-      if (expected == item.phrase) {
-	uvm_info("MATCHED", format("%s: expected \n %s: actual",
-				   expected, item.phrase), UVM_MEDIUM);
-      }
-      else {
-	uvm_error("MISMATCHED", format("%s: expected \n %s: actual",
-				       expected, item.phrase));
-      }
-      run_ph.drop_objection(this);
-    }
+    uvm_analysis_imp!(write_req) sha3_req_analysis;
+    uvm_analysis_imp!(write_rsp) sha3_rsp_analysis;
   }
 
+  sha3_seq_item sha3_req;
+  void write_req(sha3_seq_item item) {
+    // item.print();
+    sha3_req = item;
+  }
+
+  void write_rsp(sha3_seq_item item) {
+    ubyte[] expected;
+    expected.length = item.out_size/8;
+    sha3(sha3_req.phrase.ptr,
+	 cast(uint) sha3_req.phrase.length, expected.ptr, cast(uint) expected.length);
+    if (expected == item.phrase) {
+      uvm_info("MATCHED", format("%s: expected \n %s: actual",
+				 expected, item.phrase), UVM_MEDIUM);
+    }
+    else {
+      uvm_error("MISMATCHED", format("%s: expected \n %s: actual",
+				     expected, item.phrase));
+    }
+    
+  }
 }
 
 class sha3_env(int DW, int AW): uvm_env
 {
   mixin uvm_component_utils;
   @UVM_BUILD {
-    avl_agent!(DW, AW, "avl") agent;
     sha3_agent phrase_agent;
     sha3_scoreboard!(DW, AW) scoreboard;
-    sha3_monitor!(DW, AW) monitor;
   }
 
   this(string name , uvm_component parent) {
@@ -546,43 +694,11 @@ class sha3_env(int DW, int AW): uvm_env
 
   override void connect_phase(uvm_phase phase) {
     super.connect_phase(phase);
-    monitor.sha3_port.connect(scoreboard.sha3_analysis);
-    agent.monitor.rsp_port.connect(monitor.avl_analysis);
-    agent.sequencer.sha3_get_port.connect(phrase_agent.sequencer.seq_item_export);
+    phrase_agent.driver.sha3_req_port.connect(scoreboard.sha3_req_analysis);
+    phrase_agent.driver.sha3_rsp_port.connect(scoreboard.sha3_rsp_analysis);
   }
 }
       
-class avl_agent(int DW, int AW, string VPI): uvm_agent
-{
-  mixin uvm_component_utils;
-
-  @UVM_BUILD {
-    avl_driver!(DW, AW, VPI)     driver;
-    avl_sequencer!(DW, AW)       sequencer;
-    avl_monitor!(DW, AW, VPI)    monitor;
-  }
-
-  this(string name, uvm_component parent) {
-    super(name, parent);
-  }
-
-  override void connect_phase(uvm_phase phase) {
-    super.connect_phase(phase);
-    if (get_is_active() == UVM_ACTIVE) {
-      driver.seq_item_port.connect(sequencer.seq_item_export);
-    }
-  }
-}
-
-class avl_monitor(int DW, int AW, string vpi_func):
-  uvm_vpi_monitor!(avl_seq_item!(DW, AW), vpi_func)
-{
-  mixin uvm_component_utils;
-
-  this(string name, uvm_component parent) {
-    super(name, parent);
-  }
-}
 
 class random_test_parameterized(int DW, int AW): uvm_test
 {
@@ -598,60 +714,14 @@ class random_test_parameterized(int DW, int AW): uvm_test
 
   override void run_phase(uvm_phase  phase) {
     sha3_sequence!sha3_seq_item sha3_seq;
-    sha3_avl_sequence!(DW, AW) wr_seq;
     phase.raise_objection(this, "avl_test");
-    phase.get_objection.set_drain_time(this, 1.usec);
     uvm_factory.get().print();
     sha3_seq = sha3_sequence!(sha3_seq_item).type_id.create("sha3_seq");
-    for (size_t i=0; i != 100; ++i) {
-      fork ({
-	  sha3_seq.sequencer = env.phrase_agent.sequencer;
-	  sha3_seq.randomize();
-	  sha3_seq.start(env.phrase_agent.sequencer);
-	},
-	{
-	  wr_seq = sha3_avl_sequence!(DW, AW).type_id.create("wr_seq");
-	  wr_seq.sequencer = env.agent.sequencer;
-	  assert(wr_seq.sequencer !is null);
-	  // wr_seq.randomize();
-	  wr_seq.start(env.agent.sequencer);
-	}).join();
-    }
-    phase.drop_objection(this, "avl_test");
-  }
-}
-
-class random_test_parameterized_rem0(int DW, int AW): uvm_test
-{
-  mixin uvm_component_utils;
-
-  this(string name, uvm_component parent) {
-    super(name, parent);
-  }
-
-  @UVM_BUILD {
-    sha3_env!(DW, AW) env;
-  }
-
-  override void run_phase(uvm_phase  phase) {
-    sha3_sequence!sha3_seq_item_rem0 sha3_seq;
-    sha3_avl_sequence!(DW, AW) wr_seq;
-    phase.raise_objection(this, "avl_test");
-    phase.get_objection.set_drain_time(this, 1.usec);
-    sha3_seq = sha3_sequence!(sha3_seq_item_rem0).type_id.create("sha3_seq");
-    for (size_t i=0; i != 4; ++i) {
-      fork ({
-	  sha3_seq.sequencer = env.phrase_agent.sequencer;
-	  sha3_seq.randomize();
-	  sha3_seq.start(env.phrase_agent.sequencer);
-	},
-	{
-	  wr_seq = sha3_avl_sequence!(DW, AW).type_id.create("wr_seq");
-	  wr_seq.sequencer = env.agent.sequencer;
-	  assert(wr_seq.sequencer !is null);
-	  // wr_seq.randomize();
-	  wr_seq.start(env.agent.sequencer);
-	}).join();
+    for (size_t i=0; i != 1000; ++i) {
+      sha3_seq.sequencer = env.phrase_agent.sequencer;
+      sha3_seq.randomize();
+      //sha3_seq.print();
+      sha3_seq.start(env.phrase_agent.sequencer);
     }
     phase.drop_objection(this, "avl_test");
   }
@@ -665,25 +735,13 @@ class random_test: random_test_parameterized!(32, 32)
   }
 }
 
-// class random_test_rem0: random_test_parameterized_rem0!(32, 32)
-// {
-//   mixin uvm_component_utils;
-//   this(string name, uvm_component parent) {
-//     super(name, parent);
-//   }
-// }
+int main(string[] args) {
+  auto tb = new uvm_tb;
+  tb.multicore(0, 1);
+  tb.elaborate("test", args);
+  tb.set_seed(1);
+  tb.setAsyncMode();
 
-void initializeESDL() {
-  Vpi.initialize();
-
-  auto test = new uvm_tb;
-  test.multicore(0, 4);
-  test.elaborate("test");
-  test.set_seed(1);
-  test.setVpiMode();
-
-  test.start_bg();
+  return tb.start();
 }
 
-alias funcType = void function();
-shared extern(C) funcType[2] vlog_startup_routines = [&initializeESDL, null];

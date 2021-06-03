@@ -1,0 +1,29 @@
+# vsim -c sha3_tb 
+# Start time: 16:40:06 on Feb 27,2021
+# ** Note: (vsim-3812) Design is being optimized...
+# ** Error (suppressible): avl_driver.sv(22): (vopt-7063) Failed to find 'sha3_top' in hierarchical name '$root.sha3_top.d_intf'.
+#         Region: all_sv_unit.avl_driver.
+# ** Error (suppressible): sha3_monitor2.sv(24): (vopt-7063) Failed to find 'sha3_top' in hierarchical name '$root.sha3_top.d_intf'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(79): (vopt-7063) Failed to find 'sh3_str' in hierarchical name '$root.sh3_str.size'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(79): (vopt-7063) Failed to find 'size' in hierarchical name 'sh3_str.size'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(113): (vopt-7063) Failed to find 'process_transactions' in hierarchical name '$root.process_transactions'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(116): (vopt-7063) Failed to find 'format' in hierarchical name '$root.format'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(116): (vopt-7063) Failed to find 'format' in hierarchical name 'format'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(151): (vopt-7063) Failed to find 'uvm_error' in hierarchical name '$root.uvm_error'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_monitor2.sv(161): (vopt-7063) Failed to find 'compute_output_buffer' in hierarchical name '$root.compute_output_buffer'.
+#         Region: all_sv_unit.sha3_monitor.
+# ** Error (suppressible): sha3_scoreboard.sv(51): (vopt-7063) Failed to find 'format' in hierarchical name '$root.format'.
+#         Region: all_sv_unit.sha3_scoreboard.
+# ** Error (suppressible): sha3_scoreboard.sv(51): (vopt-7063) Failed to find 'format' in hierarchical name 'format'.
+#         Region: all_sv_unit.sha3_scoreboard.
+# Optimization failed
+# Error loading design
+# End time: 16:40:07 on Feb 27,2021, Elapsed time: 0:00:01
+# Errors: 11, Warnings: 0

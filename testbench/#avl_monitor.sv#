@@ -1,0 +1,7 @@
+class avl_monitor #(int DW, int AW, string vpi_func ) extends uvm_monitor #(avl_seq_item #(DW,AW));
+    `uvm_component_utils(avl_monitor);
+   
+   function new(string name = "avl_monitor", uvm_component parent = null);
+      super.new(name,parent);
+   endfunction // new
+endclass // avl_monitor

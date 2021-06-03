@@ -1,0 +1,6 @@
+#include "svdpi.h"
+
+void compute_out_buffer(svOpenArrayHandle data, svOpenArrayHandle out_buffer)
+{
+  
+}

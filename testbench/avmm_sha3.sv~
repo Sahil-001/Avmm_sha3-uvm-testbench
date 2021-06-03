@@ -1,0 +1,43 @@
+import uvm_*;
+
+module sha3_seq_item;
+   
+typedef enum {SHA3_224 = 224, SHA_256 = 256, SHA_384 = 384, SHA_512 = 512} output_size_enum;
+
+typedef enum {READ, WRITE} access_enum;
+
+class sha3_seq_item extends uvm_sequence_item;
+   access_enum typ;
+   rand byte phrase[];
+   rand output_size_enum out_size;
+
+  `uvm_object_utils_begin(sha3_seq_item)
+     `uvm_field_int (typ, UVM_DEFAULT);
+     `uvm_field_int (phrase, UVM_DEFAULT);
+     `uvm_field_int (out_size, UVM_DEFAULT);
+  `uvm_object_utils_end
+   function new(string name = "sha3_seq_item");
+      super.new(name);
+   endfunction // new
+  
+   constraint phase_length{phrase.length <= 1024;
+			   foreach (phrase[i])
+			   {
+			    phrase[i]<80;
+			    phrase[i]>10;
+			    }
+			   }
+endclass // sha3_seq_item
+   sha3_seq_item s1 = sha3_seq_item::type_id::create("s1");
+   s1.randomize();
+   s1.print();
+   
+endmodule // sha3_seq_item
+
+
+			   
+     
+
+  
+     
+     

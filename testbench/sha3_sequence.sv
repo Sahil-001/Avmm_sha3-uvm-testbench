@@ -3,7 +3,7 @@
 
 `include "sha3_sequencer.sv"
    
-class sha3_sequence extends uvm_sequence;
+class sha3_sequence extends uvm_sequence #(sha3_seq_item);
    `uvm_object_utils(sha3_sequence)
    sha3_sequencer sequencer;
    output_size_enum out_size;
